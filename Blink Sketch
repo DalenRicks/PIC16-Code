@@ -1,8 +1,6 @@
 /*
  * File:   BlinkSeries.c
  * Author: Dalen Ricks
- *         Lab 4b Blink Series in C
- *         Paul Morton *
  * Created on March 3, 2022, 1:10 PM
  */
 // PIC16F1829 Configuration Bit Settings
