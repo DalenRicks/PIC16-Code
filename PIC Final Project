@@ -1,0 +1,609 @@
+/*
+ EE 3463 Microcomputers 1
+ Final Project Code
+ Author: Dalen Ricks
+ Professor: Paul Morton
+ */
+
+// CONFIG1  
+#pragma config FOSC = INTOSC // Oscillator Selection (INTOSCoscillator: I/O function on CLKIN pin)  
+#pragma config WDTE = OFF // Watchdog Timer Enable (WDT disabled)  
+#pragma config PWRTE = OFF // Power-up Timer Enable (PWRT disabled)  
+#pragma config MCLRE = ON // MCLR Pin Function Select (MCLR/VPP pinfunction is MCLR)  
+#pragma config CP = OFF // Flash Program Memory Code Protection(Program memory code protection is disabled)  
+#pragma config CPD = OFF // Data Memory Code Protection (Datamemory code protection is disabled)  
+#pragma config BOREN = OFF // Brown-out Reset Enable (Brown-out Resetdisabled)  
+#pragma config CLKOUTEN = OFF // Clock Out Enable (CLKOUT function isdisabled. I/O or oscillator function on the CLKOUT pin)  
+#pragma config IESO = OFF // Internal/External Switchover(Internal/External Switchover mode is disabled)  
+#pragma config FCMEN = OFF // Fail-Safe Clock Monitor Enable (FailSafeClock Monitor is disabled)  
+// CONFIG2  
+#pragma config WRT = OFF // Flash Memory Self-Write Protection(Write protection off)  
+#pragma config PLLEN = OFF // PLL Enable (4x PLL disabled)  
+#pragma config STVREN = ON // Stack Overflow/Underflow Reset Enable(Stack Overflow or Underflow will cause a Reset)  
+#pragma config BORV = LO // Brown-out Reset Voltage Selection(Brown-out Reset Voltage (Vbor), low trip point selected.)  
+#pragma config LVP = ON // Low-Voltage Programming Enable (Highvoltageon MCLR/VPP must be used for programming)  
+ 
+// 'C' source line config statements  
+#include <xc.h>
+#include <math.h>
+#include <stdio.h>  
+#include <stdlib.h> 
+#include "usart.h"
+#include "i2c.h"
+#include  "i2c_LCD.h"
+
+//These are the values to set baud rate for UART and configure some functions 
+#define _XTAL_FREQ 4000000.0 /*for 4mhz*/
+
+#define I2C_SLAVE_LCD 0x27	/* was 1E Channel of i2c slave depends on soldering on back of board*/
+
+//*Function Prototypes*//   
+void pinConfig(void);
+void Display (int);
+void timer_config(void);
+
+//*USART Function Prototypes*//
+void pinConfigUsart(void);      //9600 Baud
+void setup_comms(void);  
+void putch(unsigned char);  
+unsigned char getch(void);  
+unsigned char getche(void);
+
+//*I2C LCD Function Prototypes*//
+void I2C_LCD_Command(unsigned char,unsigned char);
+void I2C_LCD_SWrite(unsigned char,unsigned char *, char);
+void I2C_LCD_Init(unsigned char);
+void I2C_LCD_Pos(unsigned char,unsigned char);
+unsigned char I2C_LCD_Busy(unsigned char);
+
+//*LED Transfer Function Prototypes*//
+void sendLedR_i2c(void);
+void sendLedG_i2c(void);
+void sendLedB_i2c(void);
+void clearLed (void);
+
+//*Global Vars*//  
+unsigned int LedR [8][8] = 
+    {{0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}};
+
+unsigned int LedG [8][8] = 
+    {{0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}};
+
+unsigned int LedB [8][8] = 
+    {{0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}, 
+    {0, 0, 0, 0, 0, 0, 0, 0}};
+
+
+unsigned int setting = 0;
+
+int animation = 0;
+
+//*4x16 Display Variables*//
+unsigned char firstLine = 0x00;
+unsigned char secondLine = 0x10;
+unsigned char thirdLine = 0x08;
+unsigned char fourthLine = 0x18;
+
+    
+
+void main(int argc, char** argv) {
+int Touch[4], mode;
+unsigned int Tcount, Threshold;
+
+CPSCON1 = 0x03; //Channel Select
+    
+    Touch[0] = 3;   //RA4 pad CPS3
+    Touch[1] = 9;   //RC7 pad CPS9
+    Touch[2] = 5;   //RC1 pad CPS5
+    Touch[3] = 4;   //RC0 pad CPS4
+    
+CPSCON0 	=   0x8C;   //Set up Touch sensing module control reg 0
+CPSCON1     =   0x03;   //Channel Select
+
+unsigned char  Sout[16];
+unsigned char * Sptr;
+Sptr = Sout;
+
+/*Initializing USART*/
+pinConfigUsart();  
+setup_comms(); // set up the USART - settings defined in usart.h 
+
+/*Initializing I2C*/
+i2c_Init();				// Start I2C as Master 100KH {RB4 = SDA RB6 = SCL}
+I2C_LCD_Init(I2C_SLAVE_LCD); //pass I2C_SLAVE to the init function to create an instance
+
+pinConfig();   
+
+Threshold 	=   0x1700; //using the threshold for all 3 channels
+
+I2C_LCD_Command(I2C_SLAVE_LCD, 0x01);       //Clear Display
+I2C_LCD_Pos(I2C_SLAVE_LCD, 0x02);
+sprintf(Sout, "Welcome!"); 
+I2C_LCD_SWrite(I2C_SLAVE_LCD, Sout, 9);
+
+I2C_LCD_Pos(I2C_SLAVE_LCD, secondLine);
+sprintf(Sout, "Press a touch"); 
+I2C_LCD_SWrite(I2C_SLAVE_LCD, Sout, 13);
+
+I2C_LCD_Pos(I2C_SLAVE_LCD, thirdLine);
+sprintf(Sout, "pad to play an"); 
+I2C_LCD_SWrite(I2C_SLAVE_LCD, Sout, 14);
+
+I2C_LCD_Pos(I2C_SLAVE_LCD, fourthLine);
+sprintf(Sout, "animation: 867"); 
+I2C_LCD_SWrite(I2C_SLAVE_LCD, Sout, 14);
+
+
+
+while (1)  {
+    mode = 4;       //Initialize Timer0, Timer 1, and scan 3 pads
+    for(int j = 0; j < 4; j++){
+        CPSCON1 = Touch[j];
+        timer_config(); //Configures Timer 0 and 1
+        while (!TMR0IF) continue;             //wait here till Timer 0 overflows
+            Tcount = (TMR1H<<8)+TMR1L;        //Save 16 bit count value in timer      
+            TMR0IF = 0; //Clear the interrupt flag for Timer 1
+            if (Tcount < Threshold) 
+                mode = j;
+    }
+    Display(mode);
+
+    
+
+    
+    /*Bullseye*/
+    if(animation == 1){
+        I2C_LCD_Command(I2C_SLAVE_LCD, 0x01);       //Clear Display
+        I2C_LCD_Pos(I2C_SLAVE_LCD, firstLine);
+        sprintf(Sout, "Animation 1"); 
+        I2C_LCD_SWrite(I2C_SLAVE_LCD, Sout, 12);
+        while(RB7){
+            
+        /*Scene 1*/
+        for(int i = 0; i < 8; i++){
+            LedR[0][i] = 1;
+            LedR[i][7] = 1;
+            LedR[7][i] = 1;
+            LedR[i][0] = 1;   
+        }
+        for(int i = 0; i < 6; i++){
+            LedG[1][i+1] = 1;
+            LedG[i+1][6] = 1;
+            LedG[6][i+1] = 1;
+            LedG[i+1][1] = 1;   
+        }
+        for(int i = 0; i < 4; i++){
+            LedB[2][i+2] = 1;
+            LedB[i+2][5] = 1;
+            LedB[5][i+2] = 1;
+            LedB[i+2][2] = 1;   
+        }
+        for(int i = 0; i < 2; i++){
+            LedR[3][i+3] = 1;
+            LedR[i+3][4] = 1;
+            LedR[4][i+3] = 1;
+            LedR[i+3][3] = 1;   
+        }
+        sendLedR_i2c();
+        sendLedG_i2c();
+        sendLedB_i2c();
+        __delay_ms(200);
+        
+        clearLed();
+        
+        /*Scene 2*/
+        for(int i = 0; i < 8; i++){
+            LedG[0][i] = 1;
+            LedG[i][7] = 1;
+            LedG[7][i] = 1;
+            LedG[i][0] = 1;   
+        }
+        for(int i = 0; i < 6; i++){
+            LedB[1][i+1] = 1;
+            LedB[i+1][6] = 1;
+            LedB[6][i+1] = 1;
+            LedB[i+1][1] = 1;   
+        }
+        for(int i = 0; i < 4; i++){
+            LedR[2][i+2] = 1;
+            LedR[i+2][5] = 1;
+            LedR[5][i+2] = 1;
+            LedR[i+2][2] = 1;   
+        }
+        for(int i = 0; i < 2; i++){
+            LedG[3][i+3] = 1;
+            LedG[i+3][4] = 1;
+            LedG[4][i+3] = 1;
+            LedG[i+3][3] = 1;   
+        }
+        sendLedR_i2c();
+        sendLedG_i2c();
+        sendLedB_i2c();
+        __delay_ms(200);
+        
+        clearLed();
+        
+        /*Scene 3*/
+        for(int i = 0; i < 8; i++){
+            LedB[0][i] = 1;
+            LedB[i][7] = 1;
+            LedB[7][i] = 1;
+            LedB[i][0] = 1;   
+        }
+        for(int i = 0; i < 6; i++){
+            LedR[1][i+1] = 1;
+            LedR[i+1][6] = 1;
+            LedR[6][i+1] = 1;
+            LedR[i+1][1] = 1;   
+        }
+        for(int i = 0; i < 4; i++){
+            LedG[2][i+2] = 1;
+            LedG[i+2][5] = 1;
+            LedG[5][i+2] = 1;
+            LedG[i+2][2] = 1;   
+        }
+        for(int i = 0; i < 2; i++){
+            LedB[3][i+3] = 1;
+            LedB[i+3][4] = 1;
+            LedB[4][i+3] = 1;
+            LedB[i+3][3] = 1;   
+        }
+        sendLedR_i2c();
+        sendLedG_i2c();
+        sendLedB_i2c();
+        __delay_ms(200);
+        
+        clearLed();
+    }   
+    /*Walking*/
+    }else if(animation == 2){
+        I2C_LCD_Command(I2C_SLAVE_LCD, 0x01);       //Clear Display
+        I2C_LCD_Pos(I2C_SLAVE_LCD, firstLine);
+        sprintf(Sout, "Animation 2"); 
+        I2C_LCD_SWrite(I2C_SLAVE_LCD, Sout, 12);
+        
+        I2C_LCD_Pos(I2C_SLAVE_LCD, secondLine);
+        sprintf(Sout, "Hold Button"); 
+        I2C_LCD_SWrite(I2C_SLAVE_LCD, Sout, 12);
+         
+        I2C_LCD_Pos(I2C_SLAVE_LCD, thirdLine);
+        sprintf(Sout, "to cancel"); 
+        I2C_LCD_SWrite(I2C_SLAVE_LCD, Sout, 10);
+        
+        for(int i = 0; i < 8; i++){
+            for(int j = 0; j < 8; j++){
+                LedR[i][j] = 1;
+                LedG[i][j] = 0;
+                LedB[i][j] = 0;
+                sendLedR_i2c();
+                sendLedG_i2c();
+                sendLedB_i2c();
+                if(!RB7){
+                    break;
+                }
+                __delay_ms(100);
+            }
+            if(!RB7){
+                break;
+            }
+        }
+        for(int i = 0; i < 8; i++){
+            for(int j = 0; j < 8; j++){
+                LedR[i][j] = 0;
+                LedG[i][j] = 1;
+                LedB[i][j] = 0;
+                sendLedR_i2c();
+                sendLedG_i2c();
+                sendLedB_i2c();
+                if(!RB7){
+                    break;
+                }
+                __delay_ms(100);
+            }
+            if(!RB7){
+                break;
+            }
+        }
+        for(int i = 0; i < 8; i++){
+            for(int j = 0; j < 8; j++){
+                LedR[i][j] = 0;
+                LedG[i][j] = 0;
+                LedB[i][j] = 1;
+                sendLedR_i2c();
+                sendLedG_i2c();
+                sendLedB_i2c();
+                if(!RB7){
+                    break;
+                }
+                __delay_ms(100);
+            }
+            if(!RB7){
+                break;
+            }
+        }
+        for(int i = 0; i < 8; i++){
+            for(int j = 0; j < 8; j++){
+                LedR[i][j] = 0;
+                LedG[i][j] = 0;
+                LedB[i][j] = 0;
+                sendLedR_i2c();
+                sendLedG_i2c();
+                sendLedB_i2c();
+                if(!RB7){
+                    break;
+                }
+                __delay_ms(100);
+            }
+            if(!RB7){
+                break;
+            }
+        }
+    
+    /*Cross walking*/
+    }else if(animation == 3){
+        I2C_LCD_Command(I2C_SLAVE_LCD, 0x01);       //Clear Display
+        I2C_LCD_Pos(I2C_SLAVE_LCD, firstLine);
+        sprintf(Sout, "Animation 3"); 
+        I2C_LCD_SWrite(I2C_SLAVE_LCD, Sout, 12);
+        
+        I2C_LCD_Pos(I2C_SLAVE_LCD, secondLine);
+        sprintf(Sout, "Hold Button"); 
+        I2C_LCD_SWrite(I2C_SLAVE_LCD, Sout, 12);
+         
+        I2C_LCD_Pos(I2C_SLAVE_LCD, thirdLine);
+        sprintf(Sout, "to cancel"); 
+        I2C_LCD_SWrite(I2C_SLAVE_LCD, Sout, 10);
+        
+        for(int i = 0; i < 8; i++){
+            for(int j = 0; j < 8; j++){
+                LedR[i][j] = 1;
+                LedG[j][i] = 1;
+                sendLedR_i2c();
+                sendLedG_i2c();
+                if(!RB7){
+                    break;
+                }
+                __delay_ms(100);
+            }
+            if(!RB7){
+                break;
+            }
+        }
+        for(int i = 7; i >= 0; i--){
+            for(int j = 7; j >= 0; j--){
+                LedR[i][j] = 0;
+                LedG[j][i] = 0;
+                sendLedR_i2c();
+                sendLedG_i2c();
+                if(!RB7){
+                    break;
+                }
+                __delay_ms(100);
+            }
+            if(!RB7){
+                break;
+            }
+        }
+    
+    /*Strobe Crossing*/
+    }else if(animation == 4){
+        I2C_LCD_Command(I2C_SLAVE_LCD, 0x01);       //Clear Display
+        I2C_LCD_Pos(I2C_SLAVE_LCD, firstLine);
+        sprintf(Sout, "Animation 4"); 
+        I2C_LCD_SWrite(I2C_SLAVE_LCD, Sout, 12);
+        
+        I2C_LCD_Pos(I2C_SLAVE_LCD, secondLine);
+        sprintf(Sout, "Hold Button"); 
+        I2C_LCD_SWrite(I2C_SLAVE_LCD, Sout, 12);
+         
+        I2C_LCD_Pos(I2C_SLAVE_LCD, thirdLine);
+        sprintf(Sout, "to cancel"); 
+        I2C_LCD_SWrite(I2C_SLAVE_LCD, Sout, 10);
+        
+        while(RB7){
+            for(int i = 0; i < 8; i++){
+                for(int j = 0; j < 8; j++){
+                    LedR[i][j] = 1;
+                    LedG[i][8-j] = 1;
+                    LedB[j][i] = 1;
+                }
+                if(!RB7){
+                    break;
+                }
+                sendLedR_i2c();
+                sendLedG_i2c();
+                sendLedB_i2c();
+                __delay_ms(50);
+            }
+            for(int i = 0; i < 8; i++){
+                for(int j = 0; j < 8; j++){
+                    LedR[i][j] = 0;
+                    LedG[i][8-j] = 0;
+                    LedB[j][i] = 0;
+                }
+                if(!RB7){
+                    break;
+                }
+                sendLedR_i2c();
+                sendLedG_i2c();
+                sendLedB_i2c();
+                __delay_ms(50);
+            }            
+        }
+        
+    }
+    else if(!RB7){
+        I2C_LCD_Command(I2C_SLAVE_LCD, 0x01);       //Clear Display
+        I2C_LCD_Pos(I2C_SLAVE_LCD, firstLine);
+        sprintf(Sout, "Clear Display"); 
+        I2C_LCD_SWrite(I2C_SLAVE_LCD, Sout, 14);
+        
+        sendLedR_i2c();
+        sendLedG_i2c();
+        sendLedB_i2c();
+        __delay_ms(500);
+        while(!RB7){
+            __delay_ms(10);
+    }
+    }    
+    __delay_ms(10);
+    return;
+}
+}
+
+void pinConfig(void)  {  
+ OSCCON = 0x6A; /* b6..4 = 1101 = 4MHz */  
+ 
+ TRISA = 0x10;  
+ ANSELA =0x10;  
+ TRISC = 0xFF; /* set as output */  
+ ANSELC =0x00; /* all ADC pins to digital I/O */  
+ TRISB = 0xF0;
+ ANSELB =0xF0;
+ INTCON = 0; // purpose of disabling the interrupts.
+ OPTION_REG  =   0XC5;  	// set up timer 0, and then timer 1
+ T1CON    	=	0XC1;   //TMR 1 Enable
+ T1GCON   	=  	0X81;   //81 is without toggle mode A1 is toggle mode
+
+ TRISC6 = 0;
+ RA2 = 1;
+ RA5 = 1;
+ RC6 = 1;
+ TRISB7 = 1;
+ TRISC2 = 1;
+ TRISC3 = 1;
+}   
+
+void timer_config(){
+    TMR1ON  	=   0;
+    TMR0    	=   0;
+    TMR1H       =   0;
+    TMR1L   	=   0;
+    TMR1ON      =   1;
+    TMR0IF  	=   0;      	//Clear the interrupt flag for Timer 1
+    TMR0    	=   0;  
+}
+
+void Display (int delay){  
+    switch(delay){
+        case 0:    //Case for button U
+            animation = 1;
+            break;
+        case 1:    //Case for button T
+            animation = 2;
+            break;
+        case 2:    //Case for button S
+            animation = 3;
+            break;
+        case 3:     //Case for button A
+            animation = 4;
+            break;
+        case 4:     //Default, No Touch
+            break;
+    }
+}
+
+void clearLed (void){
+    for(int i = 0; i < 8; i++){
+        for(int j = 0; j < 8; j++){
+            LedR[i][j] = 0;
+            LedG[i][j] = 0;
+            LedB[i][j] = 0;
+        }
+    }
+}
+
+void sendLedR_i2c (void){
+    RC6 = 0;        //Turning on the Red PIC led to indicate the red matrix is being transmitted
+    setting = 1;
+    i2c_Start();
+    i2c_Address(0x08, I2C_WRITE);
+    i2c_Write(setting);       
+    i2c_Stop();
+            
+    for(int i = 0; i <8; i++){ 
+        i2c_Start();
+        i2c_Address(0x08, I2C_WRITE);
+        i2c_Write(LedR[i][0]);
+        i2c_Write(LedR[i][1]);
+        i2c_Write(LedR[i][2]);
+        i2c_Write(LedR[i][3]);
+        i2c_Write(LedR[i][4]);
+        i2c_Write(LedR[i][5]);
+        i2c_Write(LedR[i][6]);
+        i2c_Write(LedR[i][7]);
+        i2c_Wait();
+        i2c_Stop();  
+    }
+    RC6 = 1;        //Turning off the PIC led to indicate the transmission has been completed
+}
+
+void sendLedG_i2c (void){
+    RA5 = 0;        //Turning on the Green PIC led to indicate the red matrix is being transmitted
+    setting = 2;
+    i2c_Start();
+    i2c_Address(0x08, I2C_WRITE);
+    i2c_Write(setting);       
+    i2c_Stop();
+            
+    for(int i = 0; i <8; i++){ 
+        i2c_Start();
+        i2c_Address(0x08, I2C_WRITE);
+        i2c_Write(LedG[i][0]);
+        i2c_Write(LedG[i][1]);
+        i2c_Write(LedG[i][2]);
+        i2c_Write(LedG[i][3]);
+        i2c_Write(LedG[i][4]);
+        i2c_Write(LedG[i][5]);
+        i2c_Write(LedG[i][6]);
+        i2c_Write(LedG[i][7]);
+        i2c_Wait();
+        i2c_Stop();  
+    }
+    RA5 = 1;        //Turning off the PIC led to indicate the transmission has been completed
+}
+
+void sendLedB_i2c (void){
+    RA2 = 0;        //Turning on the Blue PIC led to indicate the red matrix is being transmitted
+    setting = 3;
+    i2c_Start();
+    i2c_Address(0x08, I2C_WRITE);
+    i2c_Write(setting);       
+    i2c_Stop();
+            
+    for(int i = 0; i <8; i++){ 
+        i2c_Start();
+        i2c_Address(0x08, I2C_WRITE);
+        i2c_Write(LedB[i][0]);
+        i2c_Write(LedB[i][1]);
+        i2c_Write(LedB[i][2]);
+        i2c_Write(LedB[i][3]);
+        i2c_Write(LedB[i][4]);
+        i2c_Write(LedB[i][5]);
+        i2c_Write(LedB[i][6]);
+        i2c_Write(LedB[i][7]);
+        i2c_Wait();
+        i2c_Stop();  
+    }
+    RA2 = 1;        //Turning off the PIC led to indicate the transmission has been completed
+}
