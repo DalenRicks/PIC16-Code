@@ -33,6 +33,7 @@ void i2c_Wait(void){
 // i2c_Start - Start I2C communication
 void i2c_Start(void)
 {
+
  	i2c_Wait();
 	SSP1CON2bits.SEN=1;
 }
