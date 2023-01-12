@@ -1,0 +1,264 @@
+/*
+  EE3463 Final Project: 8x8 RGB LED display
+  Dalen Ricks
+*/
+#include <Wire.h>
+
+/*Shift Register Parameters*/
+int gnd [8] = {2, 3, 4, 5, 6, 7, 44, 46};
+int R[8] = {27, 29, 31, 33, 35, 37, 39, 41};
+int G[8] = {43, 42, 45, 47, 49, 48, 50, 51};
+int B[8] = {26, 28, 30, 34, 32, 36, 38, 40};
+int gScalar = 10;
+
+int Rpwm = 12;
+int Gpwm = 11;
+int Bpwm = 13;
+
+/*Refresh rate variable*/
+int rRate = 100;    // Value is measured in us. The display refresh rate is calculated by the following equation (rRate*64*10^-6)^-1
+//rRate = 255 approximately is a 60Hz refresh rate
+
+/*8x8 PWM Matrix Representation of RGB led*/
+volatile int PWMR [8][8] =
+{ {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0}
+};
+volatile int PWMG [8][8] =
+{ {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0}
+};
+volatile int PWMB [8][8] =
+{ {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0}
+};
+
+char k[10];
+
+//Matrix intexing variables
+int q = 0;
+
+volatile int Temp = 0;
+
+
+void setup() {
+  /*Initalizing Serial Port*/
+  Serial.begin(9600);
+  Serial.println("Serial initialized.");
+
+
+  /*Initalizing Pins*/
+  Serial.println("Initializing pins.");
+  pinMode(gnd, OUTPUT);
+  pinMode(R , OUTPUT);
+  pinMode(G, OUTPUT);
+  pinMode(B, OUTPUT);
+  pinMode(Rpwm, OUTPUT);
+  pinMode(Gpwm, OUTPUT);
+  pinMode(Bpwm, OUTPUT);
+
+  digitalWrite(Rpwm, HIGH); //Setting to run in digital mode
+  digitalWrite(Gpwm, HIGH);
+  digitalWrite(Bpwm, HIGH);
+
+  Serial.println("All pins initialized.");
+
+
+  /*Initalizing I2C commumnication*/
+  Serial.println("initializing I2C Communication.");
+
+  Serial.println("I2C initialized.");
+  Wire.begin(8);
+  Wire.onRequest(requestEvent);
+  Wire.onReceive(receiveEvent);
+
+  Serial.println("All initializations complete starting code.");
+}
+
+void loop() {
+  dispMatrix();
+}
+
+/*This function will display the values saved in the PWM LED matricies*/
+/*It is able to display all matricies in binary mode (Where all PWM matrices are either values of 0 or 1, or one colored matrix in PWM mode*/
+void dispMatrix() {
+  for (int i = 7; i >= 0; i--) {
+    for (int j = 7; j >= 0; j--) {
+
+      if (PWMR[i][j] == 0 && PWMG[i][j] == 0 && PWMB[i][j] && 0) {      //Checking if any matrix values are > 0 and turning on the drain BJT
+        digitalWrite(gnd[i], LOW);
+      } else if (PWMR[i][j] > 0 || PWMG[i][j] > 0 || PWMB[i][j] > 0) {  //Checking and turning on red led at current coordinates
+        digitalWrite(gnd[i], HIGH);
+      }
+
+      if (PWMR[i][j] == 0) {      //If the Red led at the specified coordinates is 0 the led power pin will be off, otherwise it will turn on
+        digitalWrite(R[j], LOW);
+      } else if (PWMR[i][j] > 0) {
+        digitalWrite(R[j], HIGH);
+      }
+
+      if (PWMG[i][j] == 0) {    //If the Green led at the specified coordinates is 0 the led power pin will be off, otherwise it will turn on
+        digitalWrite(G[j], LOW);
+      } else if (PWMG[i][j] > 0) {
+        digitalWrite(G[j], HIGH);
+      }
+
+      if (PWMB[i][j] == 0) {    //If the Blue led at the specified coordinates is 0 the led power pin will be off, otherwise it will turn on
+        digitalWrite(B[j], LOW);
+      } else if (PWMB[i][j] > 0) {
+        digitalWrite(B[j], HIGH);
+      }
+      delayMicroseconds(rRate);   //refresh rate delay is set in the global variables section
+
+      digitalWrite(gnd[i], LOW);
+      digitalWrite(R[j], LOW);
+      digitalWrite(G[j], LOW);
+      digitalWrite(B[j], LOW);
+    }
+  }
+}
+
+void requestEvent() {
+  Wire.write(k);
+}
+
+void receiveEvent(int howmany) { //howmany = Wire.write()executed by Master
+  if (howmany == 1) {
+    Temp = Wire.read();
+  } else {
+    if (Temp == 1) {                      //Temp = 1; Writing to Red LED matrix
+      PWMR[q][howmany - 1] = Wire.read();
+      PWMR[q][howmany - 2] = Wire.read();
+      PWMR[q][howmany - 3] = Wire.read();
+      PWMR[q][howmany - 4] = Wire.read();
+      PWMR[q][howmany - 5] = Wire.read();
+      PWMR[q][howmany - 6] = Wire.read();
+      PWMR[q][howmany - 7] = Wire.read();
+      PWMR[q][howmany - 8] = Wire.read();
+      if (q < 7) {
+        q++;
+      } else if (q >= 7) {
+        q = 0;
+      }
+    }
+    else if (Temp == 2) {                      //Temp = 1; Writing to Green LED matrix
+      PWMG[q][howmany - 1] = Wire.read();
+      PWMG[q][howmany - 2] = Wire.read();
+      PWMG[q][howmany - 3] = Wire.read();
+      PWMG[q][howmany - 4] = Wire.read();
+      PWMG[q][howmany - 5] = Wire.read();
+      PWMG[q][howmany - 6] = Wire.read();
+      PWMG[q][howmany - 7] = Wire.read();
+      PWMG[q][howmany - 8] = Wire.read();
+      if (q < 7) {
+        q++;
+      } else if (q >= 7) {
+        q = 0;
+      }
+    } else if (Temp == 3) {                      //Temp = 3; Writing to Blue LED matrix
+      PWMB[q][howmany - 1] = Wire.read();
+      PWMB[q][howmany - 2] = Wire.read();
+      PWMB[q][howmany - 3] = Wire.read();
+      PWMB[q][howmany - 4] = Wire.read();
+      PWMB[q][howmany - 5] = Wire.read();
+      PWMB[q][howmany - 6] = Wire.read();
+      PWMB[q][howmany - 7] = Wire.read();
+      PWMB[q][howmany - 8] = Wire.read();
+      if (q < 7) {
+        q++;
+      } else if (q >= 7) {
+        q = 0;
+      }
+    }
+  }
+}
+
+void dispPWMMatrix() {
+  Serial.println("-------------------");
+  Serial.println("-------------------");
+  Serial.println("LedR");
+  for (int x = 0; x < 8; x++) {
+    for (int y = 0; y < 8; y++) {
+      Serial.print(" ");
+      Serial.print(PWMR[x][y]);
+      Serial.print(",");
+    }
+    Serial.println("");
+  }
+  Serial.println("-------------------");
+  Serial.println("LedG");
+  for (int x = 0; x < 8; x++) {
+    for (int y = 0; y < 8; y++) {
+      Serial.print(" ");
+      Serial.print(PWMG[x][y]);
+      Serial.print(",");
+    }
+    Serial.println("");
+  }
+  Serial.println("-------------------");
+  Serial.println("LedB");
+  for (int x = 0; x < 8; x++) {
+    for (int y = 0; y < 8; y++) {
+      Serial.print(" ");
+      Serial.print(PWMB[x][y]);
+      Serial.print(",");
+    }
+    Serial.println("");
+  }
+  Serial.println("-------------------");
+  Serial.println("-------------------");
+}
+
+void serialDispMatrix() {
+  Serial.println("-------------------");
+  Serial.println("-------------------");
+  Serial.println("LedR");
+  for (int x = 0; x < 8; x++) {
+    for (int y = 0; y < 8; y++) {
+      Serial.print(" ");
+      Serial.print(PWMR[x][y]);
+      Serial.print(",");
+    }
+    Serial.println("");
+  }
+  Serial.println("-------------------");
+  Serial.println("LedG");
+  for (int x = 0; x < 8; x++) {
+    for (int y = 0; y < 8; y++) {
+      Serial.print(" ");
+      Serial.print(PWMG[x][y]);
+      Serial.print(",");
+    }
+    Serial.println("");
+  }
+  Serial.println("-------------------");
+  Serial.println("LedB");
+  for (int x = 0; x < 8; x++) {
+    for (int y = 0; y < 8; y++) {
+      Serial.print(" ");
+      Serial.print(PWMB[x][y]);
+      Serial.print(",");
+    }
+    Serial.println("");
+  }
+  Serial.println("-------------------");
+  Serial.println("-------------------");
+}
