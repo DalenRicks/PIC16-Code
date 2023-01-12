@@ -108,3 +108,4 @@ unsigned char HiBytex, LoBytex;
 	I2C_LCD_Busy(Slave);
  	i2c_Stop();
 }
+ 
